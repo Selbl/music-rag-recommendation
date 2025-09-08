@@ -1,0 +1,41 @@
+services:
+  # One-shot ingestion that builds indexes into the shared ./data volume
+  ingest:
+    build: .
+    command: ["python","scripts/ingest.py"]
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./rock_songs_full.csv:/app/rock_songs_full.csv
+    # On Apple Silicon, uncomment to force amd64 if FAISS wheel fails:
+    # platform: linux/amd64
+
+  app:
+    build: .
+    depends_on:
+      ingest:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    ports: ["8501:8501"]
+    command: ["streamlit","run","app.py","--server.port=8501","--server.address=0.0.0.0"]
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./rock_songs_full.csv:/app/rock_songs_full.csv
+    # platform: linux/amd64
+
+  dashboard:
+    build: .
+    depends_on:
+      ingest:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    command: ["streamlit","run","dashboard.py","--server.port=8502","--server.address=0.0.0.0"]
+    ports: ["8502:8502"]
+    volumes:
+      - ./logs:/app/logs
+    # platform: linux/amd64

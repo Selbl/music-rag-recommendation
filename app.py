@@ -98,14 +98,85 @@ if st.button("Recommend") and q.strip():
     parsed, raw = generate_explanations(q, hits, k_ctx=min(5, len(hits)))
     latency = time.time() - t0
 
-    st.subheader("Recommendations")
-    if isinstance(parsed, list) and len(parsed) > 0:
-        st.json(parsed)
-    else:
-        st.warning("The model didn't return valid JSON. Showing raw output for debugging:")
-        st.code(raw)
+    # ---------- Retrieved candidates (ranked, no index, Unknowns, no commas) ----------
+    with st.expander("Retrieved candidates", expanded=True):
+        # Ensure we have a copy to format for display
+        _hits = hits.copy()
 
-    with st.expander("Retrieved candidates"):
-        show_cols = [c for c in ["rank","name","artists","song_genre","release_date","tempo","popularity_song"] if c in hits.columns]
-        st.dataframe(hits[show_cols])
+        # Make sure a rank column exists and is first
+        if "rank" not in _hits.columns:
+            _hits.insert(0, "rank", range(1, len(_hits) + 1))
+        else:
+            # Move existing 'rank' to first column if needed
+            cols = ["rank"] + [c for c in _hits.columns if c != "rank"]
+            _hits = _hits[cols]
+
+        # Select columns to show if you already had a curated list; otherwise fallback to some likely columns
+        preferred_cols = [
+            "rank", "name", "artists", "album", "release_date",
+            "year", "tempo", "popularity_song", "is_rock"
+        ]
+        show_cols = [c for c in preferred_cols if c in _hits.columns]
+        if not show_cols:
+            show_cols = list(_hits.columns)  # fallback to everything
+
+        # Cell formatter:
+        # - NaN/None/empty -> "Unknown"
+        # - Ints/floats -> plain strings (no commas); float that is an integer shows as int
+        # - Lists/tuples -> comma-joined
+        import numpy as np
+        def _fmt_cell(x):
+            if x is None:
+                return "Unknown"
+            # pandas NA / numpy nan
+            try:
+                if pd.isna(x):
+                    return "Unknown"
+            except Exception:
+                pass
+
+            if isinstance(x, (list, tuple)):
+                return ", ".join(map(str, x)) if x else "Unknown"
+
+            if isinstance(x, (int, np.integer)):
+                return f"{int(x)}"
+
+            if isinstance(x, (float, np.floating)):
+                if np.isfinite(x):
+                    return f"{int(x)}" if float(x).is_integer() else f"{x}"
+                return "Unknown"
+
+            # Everything else as string
+            s = str(x).strip()
+            return s if s else "Unknown"
+
+        display_df = _hits[show_cols].applymap(_fmt_cell)
+
+        # Hide the side index while keeping our explicit 'rank' column
+        try:
+            st.dataframe(display_df, hide_index=True, use_container_width=True)
+        except TypeError:
+            # Streamlit < 1.25 compatibility: fake-hide index by blanking it
+            display_df.index = [""] * len(display_df)
+            st.dataframe(display_df, use_container_width=True)
+
+    # ---------- Recommendations & Explanations UI ----------
+    st.subheader("Explanations")
+
+    if isinstance(parsed, list) and len(parsed) > 0:
+        for i, item in enumerate(parsed, start=1):
+            name = (item.get("name") or "Unknown")
+            artists = (item.get("artists") or "Unknown")
+            if isinstance(artists, (list, tuple)):
+                artists = ", ".join(map(str, artists)) if artists else "Unknown"
+            reason = (item.get("reason") or "No explanation provided.")
+
+            st.markdown(f"**{i} - {name}, {artists}**")
+            st.markdown(reason)
+            st.markdown("")  # spacing between entries
+    else:
+        st.warning("No valid explanations were returned.")
+        with st.expander("Raw model output (debug)"):
+            st.code(raw)
+
 
